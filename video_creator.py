@@ -1,12 +1,18 @@
 # video_creator.py
 import os
 import subprocess
-import stable_whisper # type: ignore
+try:
+    import stable_whisper # type: ignore
+except ImportError:
+    stable_whisper = None
 from pathlib import Path
 import logging
 import math
 import sys # Added for sys.exit if utils are missing
-import torch # Import torch to check for CUDA
+try:
+    import torch # Import torch to check for CUDA
+except ImportError:
+    torch = None
 
 # Assuming utils are in a 'utils' subdirectory relative to video_creator.py
 
@@ -151,7 +157,7 @@ def create_youtube_video(
     # --- OPTIMIZED Transcription ---
     transcription_result = None
     use_fp16 = False
-    if use_gpu and torch.cuda.is_available():
+    if use_gpu and torch and torch.cuda.is_available():
         device_for_transcription = "cuda"
         use_fp16 = True # Enable FP16 for significant speedup on RTX cards
         logger.info("\nConfiguring transcription to use GPU (CUDA). FP16 enabled.")
@@ -161,6 +167,9 @@ def create_youtube_video(
 
     try:
         logger.info(f"Loading '{model_size}' model on '{device_for_transcription}' for transcription...")
+        if not stable_whisper:
+            logger.error("stable_whisper not available. Cannot perform transcription.")
+            return None
         model = stable_whisper.load_model(model_size, device=device_for_transcription)
         transcription_result = model.transcribe(str(audio_file), fp16=use_fp16) 
         logger.info("Transcription successful!")

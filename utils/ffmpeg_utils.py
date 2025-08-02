@@ -1,7 +1,10 @@
 # utils/ffmpeg_utils.py
 import os
 import subprocess
-import torch # type: ignore
+try:
+    import torch # type: ignore
+except ImportError:
+    torch = None
 import threading # Only used if you re-implement run_subprocess_with_protection with threads
 import logging
 import tempfile 
@@ -226,17 +229,17 @@ def check_pytorch_gpu_availability():
             logger.warning("PyTorch library is not available. Transcription will use CPU or fail if no alternative.")
             return False
 
-        if torch.cuda.is_available():
+        if torch and torch.cuda.is_available():
             device_count = torch.cuda.device_count()
             logger.info(f"CUDA is available for PyTorch! Found {device_count} device(s).")
             for i in range(device_count):
                 logger.info(f"  Device {i}: {torch.cuda.get_device_name(i)}")
                 logger.info(f"    CUDA Capability: {torch.cuda.get_device_capability(i)}")
             return True
-        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+        elif torch and hasattr(torch, "xpu") and torch.xpu.is_available():
             logger.info("Intel XPU (oneAPI) is available for PyTorch transcription.")
             return True
-        elif hasattr(torch, "version") and hasattr(torch.version, "hip") and torch.version.hip and torch.cuda.is_available():
+        elif torch and hasattr(torch, "version") and hasattr(torch.version, "hip") and torch.version.hip and torch.cuda.is_available():
             is_rocm = False
             for i in range(torch.cuda.device_count()):
                 if "amd" in torch.cuda.get_device_name(i).lower(): 
@@ -247,7 +250,10 @@ def check_pytorch_gpu_availability():
                 return True
         
         logger.info("No GPU acceleration (CUDA, XPU, ROCm) available for PyTorch. Using CPU for transcription.")
-        logger.info(f"PyTorch version: {torch.__version__}")
+        if torch:
+            logger.info(f"PyTorch version: {torch.__version__}")
+        else:
+            logger.info("PyTorch not available - GPU acceleration disabled")
         return False
     except Exception as e:
         logger.error(f"Error checking PyTorch GPU availability: {e}", exc_info=True)
