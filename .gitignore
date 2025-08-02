@@ -1,0 +1,6 @@
+* 
+!main.py 
+!video_creator.py 
+!utils/ 
+!utils/ffmpeg_utils.py 
+!.gitignore 
