@@ -236,12 +236,11 @@ def create_youtube_video(
         if initial_images_list: logger.info(f"Initial images will play after the video sequence.")
 
     elif single_video_for_sequence and initial_images_list: 
-        active_visual_source_type = "Single Video then Images with Loop"
-        logger.info(f"Processing single video '{single_video_for_sequence.name}' to play first, followed by images, then loop video to fill remaining audio.")
+        active_visual_source_type = "Single Video then Images"
+        logger.info(f"Processing single video '{single_video_for_sequence.name}' to play once, followed by images.")
         if not single_video_for_sequence.exists():
             logger.warning(f"Single video for sequence not found: {single_video_for_sequence}. Skipping this video.")
         else:
-            # Add the single video input once
             ffmpeg_visual_input_args.extend(["-i", str(single_video_for_sequence)])
             video_input_label = f"[{current_ffmpeg_input_idx}:v]"
             filter_out_label = f"v_single_intro_{current_ffmpeg_input_idx}"
@@ -251,43 +250,11 @@ def create_youtube_video(
             )
             visual_stream_labels_for_concat.append(f"[{filter_out_label}]")
             vid_dur = get_media_duration(single_video_for_sequence)
-            if vid_dur is not None: 
-                accumulated_duration_for_images += vid_dur
-                single_video_duration = vid_dur
-            else: 
-                logger.warning(f"Could not get duration for single intro video {single_video_for_sequence.name}.")
-                single_video_duration = 5.0  # fallback duration
+            if vid_dur is not None: accumulated_duration_for_images += vid_dur
+            else: logger.warning(f"Could not get duration for single intro video {single_video_for_sequence.name}.")
             current_ffmpeg_input_idx += 1
 
-    elif single_video_for_sequence and not initial_images_list:
-        active_visual_source_type = "Single Video Loop Only"
-        logger.info(f"Processing single video '{single_video_for_sequence.name}' to loop for entire audio duration.")
-        if not single_video_for_sequence.exists():
-            logger.warning(f"Single video for sequence not found: {single_video_for_sequence}. Skipping this video.")
-        else:
-            vid_dur = get_media_duration(single_video_for_sequence)
-            if vid_dur is not None: 
-                single_video_duration = vid_dur
-                loops_needed = math.ceil(audio_duration / single_video_duration)
-                logger.info(f"Video duration: {single_video_duration:.3f}s, need {loops_needed} loop(s) to fill audio duration {audio_duration:.3f}s.")
-            else: 
-                logger.warning(f"Could not get duration for single video {single_video_for_sequence.name}.")
-                single_video_duration = 5.0  # fallback duration
-                loops_needed = math.ceil(audio_duration / single_video_duration)
-            
-            # Add stream_loop input for the video
-            ffmpeg_visual_input_args.extend(["-stream_loop", str(loops_needed - 1), "-i", str(single_video_for_sequence)])
-            video_input_label = f"[{current_ffmpeg_input_idx}:v]"
-            filter_out_label = f"v_single_loop_only_{current_ffmpeg_input_idx}"
-            complex_filter_parts.append(
-                f"{video_input_label}scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,"
-                f"trim=duration={audio_duration:.3f}[{filter_out_label}]"
-            )
-            visual_stream_labels_for_concat.append(f"[{filter_out_label}]")
-            current_ffmpeg_input_idx += 1
-
-    if initial_images_list and (active_visual_source_type in ["None", "Video Sequence", "Single Video then Images", "Single Video then Images with Loop"] or not visual_stream_labels_for_concat):
+    if initial_images_list and (active_visual_source_type in ["None", "Video Sequence", "Single Video then Images"] or not visual_stream_labels_for_concat):
         if active_visual_source_type == "None": active_visual_source_type = "Initial Images"
         logger.info(f"Processing {len(initial_images_list)} images " + ("as primary visuals." if not visual_stream_labels_for_concat else "after preceding videos."))
         num_images = len(initial_images_list)
@@ -299,18 +266,16 @@ def create_youtube_video(
             is_last_image_in_list = (i == num_images - 1) and not video_sequence_files 
             
             current_segment_duration = 0.0
-            # For "Single Video then Images with Loop", don't extend last image - use fixed duration for all images
-            if is_last_image_in_list and active_visual_source_type != "Single Video then Images with Loop": 
+            if is_last_image_in_list: 
                 calculated_duration = audio_duration - accumulated_duration_for_images
                 current_segment_duration = max(0.1, calculated_duration)
                 logger.info(f"Last image '{img_path.name}' will play for calculated remaining {current_segment_duration:.3f}s.")
             else: 
                 current_segment_duration = float(initial_image_duration_s)
-                if active_visual_source_type != "Single Video then Images with Loop":
-                    remaining_visuals_count = (num_images - (i + 1))
-                    min_time_for_remaining = remaining_visuals_count * 0.1 
-                    if accumulated_duration_for_images + current_segment_duration + min_time_for_remaining > audio_duration:
-                         current_segment_duration = max(0.1, audio_duration - accumulated_duration_for_images - min_time_for_remaining)
+                remaining_visuals_count = (num_images - (i + 1))
+                min_time_for_remaining = remaining_visuals_count * 0.1 
+                if accumulated_duration_for_images + current_segment_duration + min_time_for_remaining > audio_duration:
+                     current_segment_duration = max(0.1, audio_duration - accumulated_duration_for_images - min_time_for_remaining)
                 current_segment_duration = max(0.1, current_segment_duration)
                 accumulated_duration_for_images += current_segment_duration
                 logger.info(f"Image '{img_path.name}' (part {i+1}/{num_images}) will play for {current_segment_duration:.3f}s.")
@@ -351,31 +316,6 @@ def create_youtube_video(
                 f"format=yuv420p,trim=duration={current_segment_duration:.3f}[{filter_out_label}]"
             )
             visual_stream_labels_for_concat.append(f"[{filter_out_label}]")
-            current_ffmpeg_input_idx += 1
-
-    # Add looping single video after images for "Single Video then Images with Loop" mode
-    if active_visual_source_type == "Single Video then Images with Loop" and single_video_for_sequence:
-        # Calculate remaining time after images
-        remaining_time_after_images = audio_duration - accumulated_duration_for_images
-        if remaining_time_after_images > 0.1:  # Only add looping if significant time remains
-            logger.info(f"Adding looping video '{single_video_for_sequence.name}' to fill remaining {remaining_time_after_images:.3f}s after images.")
-            
-            # Calculate how many loops we need
-            loops_needed = math.ceil(remaining_time_after_images / single_video_duration)
-            logger.info(f"Video duration: {single_video_duration:.3f}s, need {loops_needed} loop(s) to fill remaining time.")
-            
-            # Add stream_loop input for the same video
-            ffmpeg_visual_input_args.extend(["-stream_loop", str(loops_needed - 1), "-i", str(single_video_for_sequence)])
-            loop_video_input_label = f"[{current_ffmpeg_input_idx}:v]"
-            loop_filter_out_label = f"v_single_loop_{current_ffmpeg_input_idx}"
-            
-            # Create filter for looped video with exact duration
-            complex_filter_parts.append(
-                f"{loop_video_input_label}scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,"
-                f"trim=duration={remaining_time_after_images:.3f}[{loop_filter_out_label}]"
-            )
-            visual_stream_labels_for_concat.append(f"[{loop_filter_out_label}]")
             current_ffmpeg_input_idx += 1
     
     base_ffmpeg_cmd.extend(ffmpeg_visual_input_args) 
