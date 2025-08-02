@@ -642,9 +642,21 @@ def main():
         if str(combined_audio) not in _temporary_files_to_cleanup:
             _temporary_files_to_cleanup.append(str(combined_audio))
 
-        all_images = [f for f in visuals_dir_path.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_DOT_SUFFIXES]
-        if not all_images:
-            logger.error(f"No images found in {visuals_dir_path}. Cannot proceed.")
+        # Prioritize video file "b 1.mp4" if exists, then add other images
+        prioritized_video = visuals_dir_path / "b 1.mp4"
+        all_images = []
+        if prioritized_video.is_file():
+            # Pass prioritized video as single_video_for_sequence
+            single_video_for_sequence = prioritized_video
+        else:
+            single_video_for_sequence = None
+        # Add other images except the prioritized video
+        for f in visuals_dir_path.iterdir():
+            if f.is_file() and f.suffix.lower() in IMAGE_DOT_SUFFIXES and f != prioritized_video:
+                all_images.append(f)
+
+        if not all_images and not single_video_for_sequence:
+            logger.error(f"No images or prioritized video found in {visuals_dir_path}. Cannot proceed.")
             sys.exit(1)
 
         output_video_path = output_root_dir_path / safe_output_name
@@ -660,7 +672,7 @@ def main():
             "audio": combined_audio,
             "main_image_file_fallback": None,
             "initial_images_list": all_images,
-            "single_video_for_sequence": None,
+            "single_video_for_sequence": single_video_for_sequence,
             "looping_background_video": None,
             "video_sequence_files": [],
             "output": output_video_path,
@@ -716,14 +728,24 @@ def main():
                 job_looping_bg_vid_single = cli_video_path
         elif cli_image_path: # Only --image is provided
             job_initial_imgs_single = [cli_image_path] # Treated as an initial image sequence of one
-        else: # No visuals from CLI, try random fallback from visuals_dir
-            all_image_files_single_mode = [f for f in visuals_dir_path.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_DOT_SUFFIXES]
-            if all_image_files_single_mode:
-                job_main_img_fb_single = random.choice(all_image_files_single_mode)
-                logger.info(f"No specific visual from CLI. Using random image from visuals directory: {job_main_img_fb_single.name}")
+        else: # No visuals from CLI, try "b 1.mp4" first, then random fallback from visuals_dir
+            prioritized_video = visuals_dir_path / "b 1.mp4"
+            if prioritized_video.is_file():
+                job_single_video_for_seq_single = prioritized_video
+                logger.info(f"No specific visual from CLI. Using prioritized video: {prioritized_video.name}")
+                # Also look for images to use with the video
+                all_image_files_single_mode = [f for f in visuals_dir_path.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_DOT_SUFFIXES and f != prioritized_video]
+                if all_image_files_single_mode:
+                    job_initial_imgs_single = all_image_files_single_mode
+                    logger.info(f"Found {len(all_image_files_single_mode)} images to use with the video.")
             else:
-                 logger.error(f"No visual specified via CLI and no fallback images found in '{visuals_dir_path}'. Cannot proceed for single mode.")
-                 sys.exit(1)
+                all_image_files_single_mode = [f for f in visuals_dir_path.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_DOT_SUFFIXES]
+                if all_image_files_single_mode:
+                    job_main_img_fb_single = random.choice(all_image_files_single_mode)
+                    logger.info(f"No specific visual from CLI. Using random image from visuals directory: {job_main_img_fb_single.name}")
+                else:
+                     logger.error(f"No visual specified via CLI and no fallback images or 'b 1.mp4' found in '{visuals_dir_path}'. Cannot proceed for single mode.")
+                     sys.exit(1)
 
         output_f_path = Path(args.output if args.output else output_root_dir_path / f"{audio_f_path.stem}_video.mp4")
         if output_f_path.is_dir(): # If user gave a directory for --output
